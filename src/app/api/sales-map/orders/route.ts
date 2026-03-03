@@ -69,31 +69,50 @@ export async function GET() {
         // Always fetch from midnight today — full day's orders, client deduplicates
         const minDateCreated = getStartOfToday().toISOString();
 
-        // Fetch orders from BigCommerce
-        const url = `https://api.bigcommerce.com/stores/${storeHash}/v2/orders?min_date_created=${encodeURIComponent(minDateCreated)}&sort=date_created:desc&limit=50`;
+        // Paginate to get ALL orders today (BC max per page = 250)
+        const allOrders: BigCommerceOrder[] = [];
+        let page = 1;
+        let keepFetching = true;
 
-        const response = await fetch(url, {
-            headers: {
-                'X-Auth-Token': accessToken,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            next: { revalidate: 0 }
-        });
+        while (keepFetching) {
+            const url = `https://api.bigcommerce.com/stores/${storeHash}/v2/orders?min_date_created=${encodeURIComponent(minDateCreated)}&sort=date_created:asc&limit=250&page=${page}`;
 
-        // BC returns 204 No Content when no orders match — not an error
-        if (response.status === 204) {
-            cachedOrders = [];
-            cacheTimestamp = now;
-            return NextResponse.json({ orders: [], count: 0, lastCheck: new Date().toISOString(), cached: false });
+            const response = await fetch(url, {
+                headers: {
+                    'X-Auth-Token': accessToken,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                next: { revalidate: 0 }
+            });
+
+            // BC returns 204 No Content when no orders match — not an error
+            if (response.status === 204) {
+                break; // No more orders
+            }
+
+            if (!response.ok) {
+                console.error('BigCommerce API error:', response.status);
+                return NextResponse.json({ orders: [], error: `API error: ${response.status}` });
+            }
+
+            const pageOrders: BigCommerceOrder[] = await response.json();
+
+            if (!Array.isArray(pageOrders) || pageOrders.length === 0) {
+                break;
+            }
+
+            allOrders.push(...pageOrders);
+
+            // If we got less than 250, we've reached the last page
+            if (pageOrders.length < 250) {
+                keepFetching = false;
+            } else {
+                page++;
+            }
         }
 
-        if (!response.ok) {
-            console.error('BigCommerce API error:', response.status);
-            return NextResponse.json({ orders: [], error: `API error: ${response.status}` });
-        }
-
-        const orders = await response.json();
+        const orders = allOrders;
 
         // Process and cache
         cachedOrders = processOrders(orders);
