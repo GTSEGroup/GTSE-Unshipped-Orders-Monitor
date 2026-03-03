@@ -164,7 +164,7 @@ export default function SalesMapPage() {
         
         // Start fetching orders
         fetchOrders();
-        const interval = setInterval(fetchOrders, 30000);
+        const interval = setInterval(fetchOrders, 5 * 60 * 1000); // 5 minutes
         
         return () => {
             clearInterval(interval);
